@@ -1,0 +1,510 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        1264,
+        -368
+      ],
+      "id": "cf03be34-2df2-497c-8dfc-2beb8187f982",
+      "name": "When chat message received",
+      "webhookId": "e6314f1a-5a1c-4252-8962-a5c4ea7e493b",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Chat Input\n// Expected format (one field per line):\n//   Name: Thabo Moyo\n//   Omang: 123456789\n//   Degree: Bachelor of Accountancy (BAcc)\n//   LastKnownLocation: Gaborone\n\nconst raw = ($input.item.json.body?.chatInput || $input.item.json.chatInput || '').trim();\nconst lines = raw.split('\\n').map(l => l.trim()).filter(Boolean);\nconst data = {};\n\nfor (const line of lines) {\n  const match = line.match(/^([A-Za-z]+)\\s*:\\s*(.+)$/);\n  if (match) {\n    data[match[1].toLowerCase()] = match[2].trim();\n  }\n}\n\nconst Name = (data.name || '')\n  .replace(/\\/\\/.*$/, '')\n  .replace(/\\s*Omang:.*/i, '')\n  .replace(/\\s*ID:.*/i, '')\n  .trim();\n\nif (!Name || Name.length < 2) {\n  throw new Error(`Invalid or missing Name field. Got: \"${data.name || ''}\"`);\n}\n\nconst Omang = (data.omang || '').replace(/\\*/g, '').trim();\nconst Degree = (data.degree || '').trim();\nconst LastKnownLocation = (data.lastknownlocation || data.location || 'Botswana').trim();\n\nreturn [{ json: {\n  Name,\n  Omang,\n  Degree,\n  LastKnownLocation,\n  _debug: { original: data.name, cleaned: Name }\n}}];"
+      },
+      "id": "430a11a6-f739-4733-be75-8c4becc30e0d",
+      "name": "Parse Chat Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1488,
+        -368
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 5,
+        "unit": "seconds"
+      },
+      "id": "2502de1a-4011-4df3-9923-da2fc70e38b0",
+      "name": "Wait 5s (Rate Limit Guard)",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [
+        1664,
+        -368
+      ],
+      "webhookId": "dtef-wait"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build OSINT Vectors — Final\nconst name = $input.item.json.Name || '';\nconst omang = $input.item.json.Omang || '';\nconst degree = $input.item.json.Degree || '';\nconst location = $input.item.json.LastKnownLocation || 'Botswana';\n\nif (!name || name.includes('//') || name.includes('*')) {\n  throw new Error(`Malformed Name: \"${name}\"`);\n}\n\nconst degreeMap = {\n  'account': 'Accountant OR Auditor',\n  'audit': 'Auditor OR Internal Auditor',\n  'finance': 'Finance Officer OR Financial Analyst',\n  'bank': 'Banker OR Finance Officer',\n  'engineer': 'Engineer',\n  'civil': 'Civil Engineer OR Infrastructure',\n  'electr': 'Electrical Engineer',\n  'comput': 'IT Officer OR Developer OR Software Engineer',\n  'ict': 'IT Officer OR Developer OR Software Engineer',\n  'software': 'Software Developer OR Engineer',\n  'law': 'Lawyer OR Attorney OR Legal Counsel',\n  'medic': 'Doctor OR Medical Officer OR Physician',\n  'nurs': 'Nurse OR Registered Nurse',\n  'educat': 'Teacher OR Educator OR Lecturer',\n  'teach': 'Teacher OR Educator',\n  'busin': 'Business Manager OR Consultant OR Administrator',\n  'manag': 'Manager OR Administrator',\n  'social work': 'Social Worker OR Welfare Officer',\n  'agriculture': 'Agronomist OR Agriculture Officer',\n  'geology': 'Geologist',\n  'mining': 'Mining Engineer OR Geologist',\n  'economics': 'Economist OR Economic Analyst',\n  'statistic': 'Statistician OR Data Analyst',\n  'public admin': 'Public Administrator OR Government Officer',\n  'human resource': 'HR Officer OR Human Resources Manager',\n  'marketing': 'Marketing Officer OR Brand Manager',\n  'procurement': 'Procurement Officer OR Supply Chain',\n  'supply chain': 'Supply Chain Officer OR Logistics',\n  'environmental': 'Environmental Officer OR Conservation'\n};\n\nlet professionKeyword = '';\nconst lowerDegree = degree.toLowerCase();\nfor (const [key, value] of Object.entries(degreeMap)) {\n  if (lowerDegree.includes(key)) {\n    professionKeyword = value;\n    break;\n  }\n}\n\nif (!professionKeyword) {\n  const cleanDegree = degree.replace(/\\([^)]*\\)/g, '').trim();\n  const words = cleanDegree.split(/\\s+/).filter(w =>\n    !['bachelor','master','diploma','of','in','the','and','science','arts','technology'].includes(w.toLowerCase())\n  );\n  professionKeyword = words.slice(-2).join(' ') || degree;\n}\n\n// L1: LinkedIn profile search\nconst l1Query = encodeURIComponent(`\"${name}\" ${professionKeyword} Botswana site:linkedin.com`);\n\n// L2a: Personal Facebook profile (public posts indexed by Google)\nconst l2Query = encodeURIComponent(`\"${name}\" site:facebook.com Botswana`);\n\n// L2b: Botswana news, govt gazette, professional announcements\nconst l2bQuery = encodeURIComponent(`\"${name}\" site:mmegi.bw OR site:dailynews.gov.bw OR site:sundaystandard.info OR site:gazette.gov.bw OR site:jobsbotswana.info OR \"appointed\" OR \"promoted\"`);\n\n// L2c: Corporate Facebook pages announcing staff\nconst l2cQuery = encodeURIComponent(`\"${name}\" site:facebook.com \"welcome\" OR \"congratulates\" OR \"joins our team\" OR \"new staff\" OR \"promoted\" Botswana`);\n\n// L2d: LinkedIn company pages + professional directories\nconst l2dQuery = encodeURIComponent(`\"${name}\" site:linkedin.com/company OR site:zoominfo.com Botswana ${professionKeyword}`);\n\n// L3: CIPA company registry + university staff directories\nconst l3Query = encodeURIComponent(`\"${name}\" Botswana site:cipa.co.bw OR site:ub.bw OR site:biust.ac.bw OR site:burs.org.bw OR \"company director\" OR \"board member\"`);\n\nreturn [{ json: {\n  Name: name,\n  Omang: omang,\n  Degree: degree,\n  LastKnownLocation: location,\n  TargetProfession: professionKeyword,\n  l1Query,\n  l2Query,\n  l2bQuery,\n  l2cQuery,\n  l2dQuery,\n  l3Query,\n  RunTimestamp: new Date().toISOString()\n}}];"
+      },
+      "id": "ee53bc83-984b-46a2-b785-76b9f3fe63b5",
+      "name": "Build OSINT Vectors",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1856,
+        -368
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=http://searxng:8080/search?q={{ $json.l1Query }}&format=json",
+        "options": {}
+      },
+      "id": "dd16a5f3-ece9-476f-9b7f-e83504967f62",
+      "name": "L1: LinkedIn SearXNG",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        2048,
+        -368
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract L1 Snippets — proximity-enforced name guard\nconst vectorData = $('Build OSINT Vectors').first().json;\nconst targetName = (vectorData.Name || '').trim();\nconst nameLower = targetName.toLowerCase();\nconst results = $input.item.json.results || [];\n\nconst nameWords = nameLower.split(/\\s+/).filter(Boolean);\n\nconst nameRegex = new RegExp(\n  nameWords.map(w => '(?<![\\\\w])' + w.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&') + '(?![\\\\w])').join('(?:\\\\s+\\\\S+){0,2}\\\\s+'),\n  'i'\n);\n\nconst useProximity = nameWords.length >= 2;\nlet proximityRegex = /./;\nif (useProximity) {\n  const fnEsc = nameWords[0].replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');\n  const snEsc = nameWords[nameWords.length - 1].replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');\n  proximityRegex = new RegExp(\n    '(?<![\\\\w])' + fnEsc + '(?![\\\\w]).{0,60}(?<![\\\\w])' + snEsc + '(?![\\\\w])' +\n    '|(?<![\\\\w])' + snEsc + '(?![\\\\w]).{0,60}(?<![\\\\w])' + fnEsc + '(?![\\\\w])',\n    'i'\n  );\n}\n\nconst matched = results.filter(r => {\n  const text = [(r.title || ''), (r.content || '')].join(' ');\n  return nameRegex.test(text) && (!useProximity || proximityRegex.test(text));\n});\n\nlet snippet = 'NULL';\nif (matched.length > 0) {\n  const raw = matched\n    .slice(0, 3)\n    .map(r => [(r.title || ''), (r.content || '')].join(' '))\n    .join(' | ')\n    .substring(0, 1500);\n  snippet = raw.replace(/[\"\\\\\\n\\r\\t]/g, ' ').trim() || 'NULL';\n}\n\nreturn [{ json: { ...vectorData, l1_snippet: snippet, l1_name_matched_count: matched.length } }];"
+      },
+      "id": "fe8d2efc-2a09-4302-b0bb-5fda929b510a",
+      "name": "Extract L1 Snippets",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2240,
+        -368
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=http://searxng:8080/search?q={{ $('Build OSINT Vectors').first().json.l2Query }}&format=json",
+        "options": {}
+      },
+      "id": "b2669b22-bcf6-4579-94c8-d5c64d949c0b",
+      "name": "L2a: Personal Facebook SearXNG",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        2544,
+        -624
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "url": "=http://searxng:8080/search?q={{ $('Build OSINT Vectors').first().json.l2bQuery }}&format=json",
+        "options": {}
+      },
+      "id": "004d71fc-16ad-4932-80ef-89aab574c901",
+      "name": "L2b: News/Gazette SearXNG",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        2544,
+        -448
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "url": "=http://searxng:8080/search?q={{ $('Build OSINT Vectors').first().json.l2cQuery }}&format=json",
+        "options": {}
+      },
+      "id": "a1ef963d-2fbd-48c9-80e7-dfe2630bda9c",
+      "name": "L2c: Corporate Facebook SearXNG",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        2544,
+        -256
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "url": "=http://searxng:8080/search?q={{ $('Build OSINT Vectors').first().json.l2dQuery }}&format=json",
+        "options": {}
+      },
+      "id": "24a1d0d7-4ec9-40e9-aa74-61025dd08b4e",
+      "name": "L2d: LinkedIn Companies SearXNG",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        2544,
+        -64
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract L2 Snippets — reads from Merge node output (all 4 L2 sources)\nconst prevData = $('Extract L1 Snippets').first().json;\nconst targetName = (prevData.Name || '').trim();\nconst nameLower = targetName.toLowerCase();\n\n// Pull results from ALL items passed in by the Merge node\nconst allItems = $input.all();\nconst results = allItems.flatMap(item => item.json.results || []);\n\nconst nameWords = nameLower.split(/\\s+/).filter(Boolean);\n\nconst nameRegex = new RegExp(\n  nameWords.map(w => '(?<![\\\\w])' + w.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&') + '(?![\\\\w])').join('(?:\\\\s+\\\\S+){0,2}\\\\s+'),\n  'i'\n);\n\nconst useProximity = nameWords.length >= 2;\nlet proximityRegex = /./;\nif (useProximity) {\n  const fnEsc = nameWords[0].replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');\n  const snEsc = nameWords[nameWords.length - 1].replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');\n  proximityRegex = new RegExp(\n    '(?<![\\\\w])' + fnEsc + '(?![\\\\w]).{0,60}(?<![\\\\w])' + snEsc + '(?![\\\\w])' +\n    '|(?<![\\\\w])' + snEsc + '(?![\\\\w]).{0,60}(?<![\\\\w])' + fnEsc + '(?![\\\\w])',\n    'i'\n  );\n}\n\nconst matched = results.filter(r => {\n  const text = [(r.title || ''), (r.content || '')].join(' ');\n  return nameRegex.test(text) && (!useProximity || proximityRegex.test(text));\n});\n\nconst taggedMatches = matched.map(r => {\n  let source = 'unknown';\n  const url = (r.url || '').toLowerCase();\n  if (url.includes('facebook.com')) source = 'facebook';\n  else if (url.includes('linkedin.com')) source = 'linkedin-company';\n  else if (url.includes('mmegi') || url.includes('dailynews') || url.includes('sundaystandard') || url.includes('gazette')) source = 'news/gazette';\n  else if (url.includes('jobsbotswana')) source = 'jobs';\n  else if (url.includes('zoominfo')) source = 'zoominfo';\n  return { ...r, _source: source };\n});\n\nconst facebookMatches = taggedMatches.filter(r => r._source === 'facebook').length;\nconst newsMatches = taggedMatches.filter(r => r._source === 'news/gazette').length;\n\nlet snippet = 'NULL';\nif (taggedMatches.length > 0) {\n  const raw = taggedMatches\n    .slice(0, 5)\n    .map(r => `[${r._source.toUpperCase()}] ` + [(r.title || ''), (r.content || '')].join(' '))\n    .join(' | ')\n    .substring(0, 2000);\n  snippet = raw.replace(/[\"\\\\n\\r\\t]/g, ' ').trim() || 'NULL';\n}\n\nreturn [{ json: {\n  ...prevData,\n  l2_snippet: snippet,\n  l2_name_matched_count: taggedMatches.length,\n  l2_facebook_matches: facebookMatches,\n  l2_news_matches: newsMatches\n} }];"
+      },
+      "id": "6d83ce41-fdf7-4570-96ce-d6d9df434ef4",
+      "name": "Extract L2 Snippets",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3024,
+        -368
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=http://cipa-scraper:3000/search?name={{ encodeURIComponent($('Build OSINT Vectors').first().json.Name) }}",
+        "options": {}
+      },
+      "id": "7461d955-bd31-4cc6-af79-35327262cdd8",
+      "name": "L3: CIPA Direct Scraper",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        3216,
+        -368
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract L3 Snippets — reads from CIPA Direct Scraper API\nconst prevData = $('Extract L2 Snippets').first().json;\nconst targetName = (prevData.Name || '').trim();\nconst nameLower = targetName.toLowerCase();\n\n// CIPA API returns structured data — not SearXNG results\nconst cipaResponse = $input.item.json;\nconst cipaResults = cipaResponse.results || [];\n\nlet snippet = 'NULL';\nlet l3_name_matched_count = 0;\n\nif (cipaResults.length > 0) {\n  // Convert CIPA structured results to snippet format\n  const raw = cipaResults.map(r => {\n    const parts = [\n      r.personName || '',\n      r.companyLine || '',\n      r.interestsLine || '',\n      r.appointedLine || ''\n    ].filter(Boolean).join(' | ');\n    return '[CIPA_REGISTER] ' + parts;\n  }).join(' || ').substring(0, 2000);\n\n  snippet = raw.replace(/[\"\\\\\\n\\r\\t]/g, ' ').trim() || 'NULL';\n\n  // Count exact name matches\n  l3_name_matched_count = cipaResults.filter(r => {\n    const personName = (r.personName || '').toLowerCase();\n    return personName.includes(nameLower.split(' ')[0]) &&\n           personName.includes(nameLower.split(' ').slice(-1)[0]);\n  }).length;\n}\n\n// Also store structured CIPA data for the prompt\nconst cipaStructured = cipaResults.map(r => ({\n  name: r.personName,\n  company: r.companyLine,\n  registrationNo: r.registrationNo,\n  interests: r.interestsLine,\n  appointed: r.appointedLine\n}));\n\nreturn [{ json: {\n  ...prevData,\n  l3_snippet: snippet,\n  l3_name_matched_count,\n  l3_cipa_results: cipaStructured\n} }];"
+      },
+      "id": "8d0ec4e3-7b7f-43f5-9d85-ad1a6b762e45",
+      "name": "Extract L3 Snippets",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3440,
+        -368
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build Consolidation Prompt — Final (includes L2 source breakdown)\nconst d = $input.item.json;\n\nconst totalMatches = (d.l1_name_matched_count || 0) + (d.l2_name_matched_count || 0) + (d.l3_name_matched_count || 0);\n\nconst l2SourceDetail = `(Facebook: ${d.l2_facebook_matches || 0} matches, News/Gazette: ${d.l2_news_matches || 0} matches, total: ${d.l2_name_matched_count || 0})`;\n\nconst prompt =\n'You are an OSINT consolidation analyst for a government loan repayment enforcement agency (DTEF).\\n\\n' +\n'CRITICAL RULE: You may only use data about the EXACT person named below. ' +\n'If a source mentions a similar but different name, you MUST ignore that source entirely.\\n\\n' +\n'TARGET PERSON:\\n' +\n'- Full Name: ' + d.Name + '\\n' +\n'- National ID (Omang): ' + (d.Omang || 'N/A') + '\\n' +\n'- Funded Degree: ' + (d.Degree || 'N/A') + '\\n' +\n'- Expected Profession: ' + (d.TargetProfession || 'Unknown') + '\\n' +\n'- Last Known Location: ' + d.LastKnownLocation + '\\n\\n' +\n'SEARCH RESULTS FROM 3 LEVELS:\\n\\n' +\n'SOURCE 1 — LinkedIn Profile (High Reliability, ' + (d.l1_name_matched_count || 0) + ' exact name matches):\\n' +\n(d.l1_snippet === 'NULL' ? 'No exact name matches found.' : d.l1_snippet) + '\\n\\n' +\n'SOURCE 2 — Social/News/Corporate ' + l2SourceDetail + ':\\n' +\n'Results are tagged with [FACEBOOK], [NEWS/GAZETTE], [LINKEDIN-COMPANY], [JOBS] or [ZOOMINFO].\\n' +\n(d.l2_snippet === 'NULL' ? 'No exact name matches found.' : d.l2_snippet) + '\\n\\n' +\n'SOURCE 3 — CIPA Company Registry (Direct, High Reliability, ' + (d.l3_name_matched_count || 0) + ' exact name matches):\\n' +\n(d.l3_snippet === 'NULL' ? 'No CIPA records found for this person.' : d.l3_snippet) +\n(d.l3_cipa_results && d.l3_cipa_results.length > 0 ? '\\nCIPA STRUCTURED DATA: ' + JSON.stringify(d.l3_cipa_results) : '') + '\\n\\n' +\n'MATCHING RULES:\\n' +\n'- Accept ONLY results where \"' + d.Name + '\" appears as a CHARACTER-FOR-CHARACTER exact match.\\n' +\n'- [FACEBOOK] tags from corporate pages announcing staff are HIGH VALUE — treat employer name from these as reliable.\\n' +\n'- [NEWS/GAZETTE] tags are HIGH VALUE for government appointments and promotions.\\n' +\n'- Do NOT confirm near-matches, partial surnames, or abbreviated names.\\n' +\n'- Total pre-filtered exact matches across all sources: ' + totalMatches + '\\n\\n' +\n'CONFIDENCE GUIDE:\\n' +\n'- HIGH: 2+ sources agree on same employer, OR 1 high-reliability source (CIPA/gazette/corporate Facebook).\\n' +\n'- MEDIUM: 1 medium-reliability source (personal Facebook, LinkedIn company page).\\n' +\n'- LOW: Data is ambiguous or contradicts itself.\\n' +\n'- NONE: Zero exact name matches found.\\n\\n' +\n'Return ONLY a raw JSON object (no markdown, no code fences) with these exact keys:\\n' +\n'{\\n' +\n'  \"best_employer\": \"Most likely current employer, or Unknown\",\\n' +\n'  \"best_title\": \"Job title if found, or Unknown\",\\n' +\n'  \"confidence\": \"HIGH | MEDIUM | LOW | NONE\",\\n' +\n'  \"location\": \"Current city/area if found, or ' + d.LastKnownLocation + '\",\\n' +\n'  \"sources_matched\": <number 0-3>,\\n' +\n'  \"best_source\": \"Which source gave the strongest signal\",\\n' +\n'  \"reasoning\": \"2-3 sentence explanation citing which sources agreed\",\\n' +\n'  \"drift_warning\": <true if any source might be a different person>,\\n' +\n'  \"action_required\": <true if human follow-up is needed>,\\n' +\n'  \"name_found_in_sources\": [\"exact name strings that matched\"]\\n' +\n'}';\n\nreturn [{ json: { ...d, consolidation_prompt: prompt, total_matches: totalMatches } }];"
+      },
+      "id": "a418765c-7a18-432e-b827-5fdf8e1c12fb",
+      "name": "Build Consolidation Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3648,
+        -368
+      ]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-1.5-flash",
+          "mode": "id"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "={{ $json.consolidation_prompt }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "25f9ba11-1790-45e9-81f9-c305f12593f3",
+      "name": "Gemini: Consolidate & Verify",
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        3872,
+        -368
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "yzM8p7JtyRZQmS96",
+          "name": "OSINT"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format Result — Final\nconst rawText =\n  $input.item.json.text ||\n  $input.item.json.content ||\n  $input.item.json.candidates?.[0]?.content?.parts?.[0]?.text ||\n  '';\n\nconst d = $('Build Consolidation Prompt').first().json;\n\nlet result = {\n  best_employer: 'Unknown',\n  best_title: 'Unknown',\n  confidence: 'NONE',\n  location: d.LastKnownLocation,\n  sources_matched: 0,\n  best_source: 'None',\n  reasoning: 'AI response could not be parsed.',\n  drift_warning: false,\n  action_required: true,\n  name_found_in_sources: []\n};\n\ntry {\n  const clean = rawText.replace(/```json|```/g, '').trim();\n  result = JSON.parse(clean);\n} catch(e) {\n  result.parse_error = e.message;\n  result.raw_response = rawText.substring(0, 300);\n}\n\n// Anti-drift guard\nconst targetLower = (d.Name || '').trim().toLowerCase();\nconst foundNames = result.name_found_in_sources || [];\nconst validNames = foundNames.filter(n => (n || '').trim().toLowerCase() === targetLower);\n\nif (foundNames.length > 0 && validNames.length === 0) {\n  result.best_employer = 'Unknown — drift detected (AI matched wrong person)';\n  result.confidence = 'NONE';\n  result.drift_warning = true;\n  result.drift_rejected = true;\n  result.reasoning = 'AI matched names that do not equal the target (\"' + foundNames.join('\", \"') + '\"). All results rejected.';\n  result.action_required = true;\n}\n\nif (d.total_matches === 0) {\n  result.best_employer = 'Unknown — no exact name matches in any source';\n  result.confidence = 'NONE';\n  result.sources_matched = 0;\n  result.reasoning = 'SearXNG returned 0 results containing the exact name \"' + d.Name + '\". Similar names were filtered as potential drift.';\n  result.action_required = true;\n}\n\nconst conf = result.confidence === 'HIGH' ? '🟢' :\n             result.confidence === 'MEDIUM' ? '🟡' :\n             result.confidence === 'LOW' ? '🟠' : '🔴';\n\nconst srcLine = (snippet, label, count) => {\n  if (!snippet || snippet === 'NULL') return `  ❌ ${label}: No exact matches`;\n  return `  ✅ ${label}: ${count} match(es) — ${snippet.substring(0, 180)}...`;\n};\n\nconst l2Label = `L2 Social/News/Corporate (FB:${d.l2_facebook_matches||0} News:${d.l2_news_matches||0})`;\n\nconst output =\n'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\\n' +\n'🔍 DTEF OSINT CONSOLIDATED TRACE\\n' +\n'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\\n\\n' +\n'👤 TARGET\\n' +\n'   Name:     ' + d.Name + '\\n' +\n'   Omang:    ' + (d.Omang || 'N/A') + '\\n' +\n'   Degree:   ' + (d.Degree || 'N/A') + '\\n' +\n'   Location: ' + d.LastKnownLocation + '\\n\\n' +\nconf + ' RESULT\\n' +\n'   Confidence:   ' + result.confidence + '\\n' +\n'   Employer:     ' + result.best_employer + '\\n' +\n'   Title:        ' + result.best_title + '\\n' +\n'   Location:     ' + (result.location || d.LastKnownLocation) + '\\n' +\n'   Best Source:  ' + (result.best_source || 'N/A') + '\\n\\n' +\n'📊 SOURCES (' + result.sources_matched + '/3 matched)\\n' +\nsrcLine(d.l1_snippet, 'L1 LinkedIn', d.l1_name_matched_count) + '\\n' +\nsrcLine(d.l2_snippet, l2Label, d.l2_name_matched_count) + '\\n' +\nsrcLine(d.l3_snippet, 'L3 CIPA/Registry', d.l3_name_matched_count) + '\\n\\n' +\n'📝 ANALYSIS\\n' + result.reasoning + '\\n\\n' +\n(result.drift_warning ? '⚠️  DRIFT WARNING: Similar names detected and filtered.\\n' : '') +\n(result.action_required ? '⚠️  MANUAL VERIFICATION REQUIRED\\n' : '✅ CROSS-VERIFIED — No manual action needed\\n') +\n'━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━';\n\nreturn [{ json: result }];"
+      },
+      "id": "51f68969-4c66-4d4f-b29d-8acd9d20265a",
+      "name": "Format Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4176,
+        -368
+      ]
+    },
+    {
+      "parameters": {
+        "numberInputs": 4
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        2768,
+        -400
+      ],
+      "id": "6ac6bc0f-5a73-4877-aef8-912500c42f59",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "osint",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        1280,
+        -96
+      ],
+      "id": "46d600c8-7dd6-47a2-b802-0c520219c2c9",
+      "name": "Webhook",
+      "webhookId": "59c73749-78c7-47b6-89e5-7e2d981fa6aa"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        4416,
+        -368
+      ],
+      "id": "485da7e3-83b9-4f5f-b5f9-b49c33f8234d",
+      "name": "Respond to Webhook"
+    }
+  ],
+  "connections": {
+    "When chat message received": {
+      "main": [
+        [
+          {
+            "node": "Parse Chat Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Chat Input": {
+      "main": [
+        [
+          {
+            "node": "Wait 5s (Rate Limit Guard)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 5s (Rate Limit Guard)": {
+      "main": [
+        [
+          {
+            "node": "Build OSINT Vectors",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build OSINT Vectors": {
+      "main": [
+        [
+          {
+            "node": "L1: LinkedIn SearXNG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "L1: LinkedIn SearXNG": {
+      "main": [
+        [
+          {
+            "node": "Extract L1 Snippets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract L1 Snippets": {
+      "main": [
+        [
+          {
+            "node": "L2a: Personal Facebook SearXNG",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "L2b: News/Gazette SearXNG",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "L2c: Corporate Facebook SearXNG",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "L2d: LinkedIn Companies SearXNG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "L2a: Personal Facebook SearXNG": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "L2b: News/Gazette SearXNG": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "L2c: Corporate Facebook SearXNG": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "L2d: LinkedIn Companies SearXNG": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
+    },
+    "Extract L2 Snippets": {
+      "main": [
+        [
+          {
+            "node": "L3: CIPA Direct Scraper",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "L3: CIPA Direct Scraper": {
+      "main": [
+        [
+          {
+            "node": "Extract L3 Snippets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract L3 Snippets": {
+      "main": [
+        [
+          {
+            "node": "Build Consolidation Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Consolidation Prompt": {
+      "main": [
+        [
+          {
+            "node": "Gemini: Consolidate & Verify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini: Consolidate & Verify": {
+      "main": [
+        [
+          {
+            "node": "Format Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Result": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Extract L2 Snippets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Parse Chat Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "257f32e109e00be392c2aff0c6cd721a1009a9ba2b4bb89b0f855e1be8816c46"
+  }
+}
