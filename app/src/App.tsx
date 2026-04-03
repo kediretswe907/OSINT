@@ -25,11 +25,13 @@ interface LogEntry {
 }
 
 function App() {
+  const defaultWebhookUrl =
+    (import.meta.env.VITE_N8N_WEBHOOK_URL as string | undefined)?.trim() || '/api/osint';
   const [name, setName] = useState('');
   const [omang, setOmang] = useState('');
   const [degree, setDegree] = useState('');
   const [location, setLocation] = useState('Botswana');
-  const [webhookUrl, setWebhookUrl] = useState('/api/osint');
+  const [webhookUrl, setWebhookUrl] = useState(defaultWebhookUrl);
   const [isScanning, setIsScanning] = useState(false);
   const [result, setResult] = useState<OSINTResult | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -55,7 +57,11 @@ function App() {
     // Initial system logs
     addLog('DTEF OSINT DEBTOR TRACER v2.4.1 initialized', 'system');
     addLog('Connection status: STANDBY', 'warning');
-    addLog('Configure webhook URL to begin operations', 'info');
+    if (defaultWebhookUrl === '/api/osint') {
+      addLog('Configure webhook URL to begin operations', 'info');
+    } else {
+      addLog('Webhook URL loaded from environment configuration', 'success');
+    }
   }, []);
 
   const initiateScan = async () => {
