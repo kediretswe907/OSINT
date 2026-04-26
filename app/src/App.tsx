@@ -1,20 +1,14 @@
 import { useState, useRef, useEffect } from 'react';
-import { Terminal, Search, AlertTriangle, Activity, Database, Globe, User, Shield, Cpu, Radio } from 'lucide-react';
+import { Terminal, Search, AlertTriangle, Activity, Database, Globe, User, Shield, CheckCircle, Settings } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
 interface OSINTResult {
-  best_employer?: string;
-  best_title?: string;
   confidence?: string;
-  location?: string;
-  sources_matched?: number;
-  best_source?: string;
-  reasoning?: string;
   drift_warning?: boolean;
   action_required?: boolean;
-  name_found_in_sources?: string[];
+  [key: string]: any;
 }
 
 interface LogEntry {
@@ -24,18 +18,46 @@ interface LogEntry {
   message: string;
 }
 
+// Helper to render complex JSON objects nicely
+const JsonViewer = ({ data }: { data: any }) => {
+  if (typeof data !== 'object' || data === null) {
+    return <span className="text-zinc-300">{String(data)}</span>;
+  }
+
+  if (Array.isArray(data)) {
+    return (
+      <ul className="list-disc list-inside text-zinc-300 ml-2 space-y-1">
+        {data.map((item, i) => (
+          <li key={i}><JsonViewer data={item} /></li>
+        ))}
+      </ul>
+    );
+  }
+
+  return (
+    <div className="space-y-1 mt-1">
+      {Object.entries(data).map(([key, value]) => (
+        <div key={key} className="pl-3 border-l border-zinc-800">
+          <span className="text-zinc-500 text-xs font-medium uppercase tracking-wider">{key.replace(/_/g, ' ')}: </span>
+          <JsonViewer data={value} />
+        </div>
+      ))}
+    </div>
+  );
+};
+
 function App() {
   const defaultWebhookUrl =
     (import.meta.env.VITE_N8N_WEBHOOK_URL as string | undefined)?.trim() || '/api/osint';
   const [name, setName] = useState('');
-  const [omang, setOmang] = useState('');
-  const [degree, setDegree] = useState('');
-  const [location, setLocation] = useState('Botswana');
+  const [courseOfStudy, setCourseOfStudy] = useState('');
+  const [yearOfCommencement, setYearOfCommencement] = useState('');
+  const [institution, setInstitution] = useState('');
   const [webhookUrl, setWebhookUrl] = useState(defaultWebhookUrl);
   const [isScanning, setIsScanning] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [result, setResult] = useState<OSINTResult | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [showSettings, setShowSettings] = useState(false);
   const logsEndRef = useRef<HTMLDivElement>(null);
   const logIdRef = useRef(0);
 
@@ -54,23 +76,11 @@ function App() {
   }, [logs]);
 
   useEffect(() => {
-    // Initial system logs
     addLog('DTEF OSINT DEBTOR TRACER v2.4.1 initialized', 'system');
-    addLog('Connection status: STANDBY', 'warning');
-    if (defaultWebhookUrl === '/api/osint') {
-      addLog('Configure webhook URL to begin operations', 'info');
-    } else {
-      addLog('Webhook URL loaded from environment configuration', 'success');
-    }
+    addLog('Awaiting search parameters...', 'info');
   }, []);
 
   const initiateScan = async () => {
-    if (!webhookUrl) {
-      addLog('ERROR: Webhook URL not configured', 'error');
-      setShowSettings(true);
-      return;
-    }
-
     if (!name.trim()) {
       addLog('ERROR: Target identifier (Name) required', 'error');
       return;
@@ -82,22 +92,16 @@ function App() {
 
     addLog(`TARGET ACQUISITION INITIATED`, 'system');
     addLog(`Subject: ${name}`, 'info');
-    addLog(`National ID: ${omang || 'N/A'}`, 'info');
-    addLog(`Degree Profile: ${degree || 'N/A'}`, 'info');
-    addLog(`Geofence: ${location}`, 'info');
-    addLog('----------------------------------------', 'system');
+    addLog(`Course of Study: ${courseOfStudy || 'N/A'}`, 'info');
+    addLog(`Year of Commencement: ${yearOfCommencement || 'N/A'}`, 'info');
+    addLog(`Institution: ${institution || 'N/A'}`, 'info');
 
     try {
-      addLog('Establishing secure connection...', 'info');
+      addLog('Initiating search sequence...', 'info');
       await new Promise(r => setTimeout(r, 800));
       
-      addLog('Handshake successful. Encrypting payload...', 'success');
-      await new Promise(r => setTimeout(r, 600));
-
-      addLog('Transmitting OSINT vectors to remote node...', 'info');
-      
       const payload = {
-        chatInput: `Name: ${name}\nOmang: ${omang}\nDegree: ${degree}\nLastKnownLocation: ${location}`
+        chatInput: `Name: ${name}\nCourse of Study: ${courseOfStudy}\nYear of Commencement: ${yearOfCommencement}\nInstitution: ${institution}`
       };
 
       const response = await fetch(webhookUrl, {
@@ -112,14 +116,14 @@ function App() {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
-      addLog('Response received. Decrypting...', 'success');
-      await new Promise(r => setTimeout(r, 500));
-
+      addLog('Search complete. Data retrieved successfully', 'success');
       const data = await response.json();
-      addLog('Data parsed successfully', 'success');
-      addLog('----------------------------------------', 'system');
+      
+      // Dump raw n8n output to log
+      addLog('--- RAW N8N OUTPUT ---', 'system');
+      const rawLines = JSON.stringify(data, null, 2).split('\n');
+      rawLines.forEach(line => addLog(line, 'system'));
 
-      // Parse the response - it might be in different formats
       let parsedResult: OSINTResult = {};
       
       if (Array.isArray(data) && data[0] && data[0].structured) {
@@ -136,7 +140,7 @@ function App() {
         try {
           parsedResult = JSON.parse(data.text);
         } catch {
-          parsedResult = { reasoning: data.text };
+          parsedResult = { raw_output: data.text, full_data: data };
         }
       } else {
         parsedResult = data;
@@ -144,356 +148,334 @@ function App() {
 
       setResult(parsedResult);
 
-      // Log results
-      if (parsedResult.best_employer) {
-        addLog(`EMPLOYER IDENTIFIED: ${parsedResult.best_employer}`, 'success');
-      }
-      if (parsedResult.best_title) {
-        addLog(`TITLE: ${parsedResult.best_title}`, 'info');
-      }
       if (parsedResult.confidence) {
         const confColor = parsedResult.confidence === 'HIGH' ? 'success' : 
                          parsedResult.confidence === 'MEDIUM' ? 'warning' : 'error';
         addLog(`CONFIDENCE LEVEL: ${parsedResult.confidence}`, confColor as LogEntry['type']);
       }
       if (parsedResult.drift_warning) {
-        addLog('⚠️ DRIFT WARNING: Identity mismatch detected', 'error');
-      }
-      if (parsedResult.sources_matched !== undefined) {
-        addLog(`Sources analyzed: ${parsedResult.sources_matched}`, 'info');
+        addLog('DRIFT WARNING: Identity mismatch detected', 'error');
       }
 
-      addLog('----------------------------------------', 'system');
       addLog('ACQUISITION COMPLETE', 'success');
 
     } catch (error) {
       addLog(`CONNECTION FAILED: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
-      addLog('Check webhook URL and network connectivity', 'warning');
     } finally {
       setIsScanning(false);
     }
   };
 
   const getConfidenceColor = (confidence?: string) => {
-    switch (confidence) {
-      case 'HIGH': return 'text-green-400 glow-text';
-      case 'MEDIUM': return 'text-yellow-400';
-      case 'LOW': return 'text-orange-400';
-      default: return 'text-red-400';
-    }
-  };
-
-  const getConfidenceIcon = (confidence?: string) => {
-    switch (confidence) {
-      case 'HIGH': return '🟢';
-      case 'MEDIUM': return '🟡';
-      case 'LOW': return '🟠';
-      default: return '🔴';
+    switch (confidence?.toUpperCase()) {
+      case 'HIGH': return 'text-zinc-100 bg-zinc-800 border-zinc-700';
+      case 'MEDIUM': return 'text-zinc-300 bg-zinc-800/50 border-zinc-700/50';
+      case 'LOW': return 'text-zinc-400 bg-zinc-900 border-zinc-800';
+      default: return 'text-zinc-500 bg-zinc-900 border-zinc-800';
     }
   };
 
   return (
-    <div className="min-h-screen bg-black text-green-400 font-mono scanline matrix-bg">
+    <div className="min-h-screen bg-black text-zinc-300 selection:bg-zinc-800">
       {/* Header */}
-      <header className="border-b border-green-900/50 bg-black/80 backdrop-blur-sm sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 py-4">
+      <header className="border-b border-zinc-900 bg-black/80 backdrop-blur-md sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-6 py-5">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <Terminal className="w-6 h-6 text-green-400" />
+              <div className="w-8 h-8 rounded-full bg-white flex items-center justify-center">
+                <Search className="w-4 h-4 text-black" />
+              </div>
               <div>
-                <h1 className="text-xl font-bold tracking-wider glow-text">
-                  <span className="text-green-500">{'>'}</span> DTEF_OSINT_TRACER
+                <h1 className="text-xl font-semibold tracking-tight text-white">
+                  DTEF OSINT TRACER
                 </h1>
-                <p className="text-xs text-green-600">[CLASSIFIED] Debtor Intelligence Aggregation System v2.4.1</p>
+                <p className="text-xs text-zinc-500 font-medium tracking-wide">ENTERPRISE INTELLIGENCE SYSTEM v2.4.1</p>
               </div>
             </div>
-            <div className="flex items-center gap-4 text-sm">
-              <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-green-500 pulse-status"></span>
-                <span className="text-green-400">SYSTEM ONLINE</span>
+            <div className="flex items-center gap-4 text-sm font-medium">
+              <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-zinc-900 border border-zinc-800">
+                <span className="w-2 h-2 rounded-full bg-white animate-pulse"></span>
+                <span className="text-zinc-300 text-xs">SYSTEM ONLINE</span>
               </div>
-              <span className="text-green-600">{new Date().toISOString().split('T')[0]}</span>
+              <button 
+                onClick={() => setShowSettings(!showSettings)}
+                className="text-zinc-500 hover:text-white transition-colors"
+              >
+                <Settings className="w-4 h-4" />
+              </button>
             </div>
           </div>
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 py-6">
+      <main className="max-w-7xl mx-auto px-6 py-8">
         {/* Warning Banner */}
-        <div className="mb-6 border border-yellow-900/50 bg-yellow-950/20 rounded-lg p-4">
-          <div className="flex items-start gap-3">
-            <AlertTriangle className="w-5 h-5 text-yellow-500 flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="text-yellow-400 font-bold text-sm">[WARNING] AUTHORIZED PERSONNEL ONLY</p>
-              <p className="text-yellow-600/80 text-xs mt-1">
-                This system accesses restricted databases. All queries are logged and monitored. 
-                Unauthorized access is a criminal offense under the Data Protection Act.
-              </p>
-            </div>
+        <div className="mb-8 border border-zinc-800 bg-zinc-900/50 rounded-xl p-4 flex items-start gap-4">
+          <div className="mt-0.5">
+            <AlertTriangle className="w-5 h-5 text-zinc-400" />
+          </div>
+          <div>
+            <p className="text-zinc-200 font-medium text-sm">RESTRICTED ACCESS</p>
+            <p className="text-zinc-500 text-xs mt-1 leading-relaxed">
+              This system accesses sensitive databases. All queries are logged and monitored. 
+              Unauthorized access is strictly prohibited and subject to legal action.
+            </p>
           </div>
         </div>
 
         {/* Settings Panel */}
         {showSettings && (
-          <div className="mb-6 border border-green-900/50 bg-black/60 rounded-lg p-4">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-green-400 font-bold flex items-center gap-2">
-                <Cpu className="w-4 h-4" />
+          <div className="mb-8 border border-zinc-800 bg-zinc-950 rounded-xl p-5 animate-in">
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="text-white font-medium flex items-center gap-2 text-sm">
+                <Settings className="w-4 h-4 text-zinc-400" />
                 SYSTEM CONFIGURATION
               </h3>
               <button 
                 onClick={() => setShowSettings(false)}
-                className="text-green-600 hover:text-green-400"
+                className="text-zinc-500 hover:text-white transition-colors text-xs font-medium"
               >
-                [CLOSE]
+                CLOSE
               </button>
             </div>
-            <div className="space-y-3">
+            <div className="space-y-4 max-w-2xl">
               <div>
-                <Label className="text-green-500 text-xs mb-1 block">WEBHOOK ENDPOINT URL</Label>
+                <Label className="text-zinc-400 text-xs mb-2 block font-medium">ENDPOINT URL</Label>
                 <Input
                   value={webhookUrl}
                   onChange={(e) => setWebhookUrl(e.target.value)}
                   placeholder="https://your-n8n-instance.com/webhook/osint"
-                  className="bg-black border-green-800 text-green-400 placeholder:text-green-900 font-mono text-sm focus:border-green-400 focus:ring-green-400/20"
+                  className="bg-black border-zinc-800 text-white placeholder:text-zinc-700 focus:border-zinc-500 focus:ring-0 transition-all rounded-lg"
                 />
               </div>
             </div>
           </div>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
           {/* Input Panel */}
-          <div className="space-y-4">
-            {/* Target Acquisition Form */}
-            <div className="border border-green-900/50 bg-black/60 rounded-lg overflow-hidden">
-              <div className="bg-green-950/30 px-4 py-2 border-b border-green-900/50 flex items-center gap-2">
-                <Search className="w-4 h-4 text-green-500" />
-                <span className="text-green-400 text-sm font-bold">TARGET_ACQUISITION.exe</span>
-              </div>
-              
-              <div className="p-4 space-y-4">
-                <div className="space-y-3">
-                  <div>
-                    <Label className="text-green-500 text-xs mb-1 flex items-center gap-2">
-                      <User className="w-3 h-3" />
-                      root@osint:~$ enter_target_name
+          <div className="lg:col-span-4 space-y-6">
+            <div className="border border-zinc-800 bg-black rounded-2xl overflow-hidden shadow-2xl">
+              <div className="p-6 space-y-6">
+                <div>
+                  <h2 className="text-lg font-medium text-white mb-1">Target Acquisition</h2>
+                  <p className="text-xs text-zinc-500">Enter known subject parameters</p>
+                </div>
+
+                <div className="space-y-5">
+                  <div className="space-y-2">
+                    <Label className="text-zinc-400 text-xs font-medium flex items-center gap-2">
+                      <User className="w-3.5 h-3.5" />
+                      FULL NAME
                     </Label>
                     <Input
                       value={name}
                       onChange={(e) => setName(e.target.value)}
-                      placeholder="e.g., Thabo Moyo"
-                      className="bg-black border-green-800 text-green-400 placeholder:text-green-900 font-mono focus:border-green-400 focus:ring-green-400/20"
+                      placeholder="e.g. Joy Lethabo"
+                      className="bg-zinc-950 border-zinc-800 text-white placeholder:text-zinc-700 focus:border-zinc-500 focus:ring-0 rounded-lg h-11"
                       disabled={isScanning}
                     />
                   </div>
 
-                  <div>
-                    <Label className="text-green-500 text-xs mb-1 flex items-center gap-2">
-                      <Shield className="w-3 h-3" />
-                      root@osint:~$ enter_national_id
+                  <div className="space-y-2">
+                    <Label className="text-zinc-400 text-xs font-medium flex items-center gap-2">
+                      <Shield className="w-3.5 h-3.5" />
+                      COURSE OF STUDY
                     </Label>
                     <Input
-                      value={omang}
-                      onChange={(e) => setOmang(e.target.value)}
-                      placeholder="Omang Number (optional)"
-                      className="bg-black border-green-800 text-green-400 placeholder:text-green-900 font-mono focus:border-green-400 focus:ring-green-400/20"
+                      value={courseOfStudy}
+                      onChange={(e) => setCourseOfStudy(e.target.value)}
+                      placeholder="e.g. Bachelor of Accountancy"
+                      className="bg-zinc-950 border-zinc-800 text-white placeholder:text-zinc-700 focus:border-zinc-500 focus:ring-0 rounded-lg h-11"
                       disabled={isScanning}
                     />
                   </div>
 
-                  <div>
-                    <Label className="text-green-500 text-xs mb-1 flex items-center gap-2">
-                      <Database className="w-3 h-3" />
-                      root@osint:~$ enter_degree_profile
+                  <div className="space-y-2">
+                    <Label className="text-zinc-400 text-xs font-medium flex items-center gap-2">
+                      <Database className="w-3.5 h-3.5" />
+                      YEAR OF COMMENCEMENT
                     </Label>
                     <Input
-                      value={degree}
-                      onChange={(e) => setDegree(e.target.value)}
-                      placeholder="e.g., Bachelor of Accountancy"
-                      className="bg-black border-green-800 text-green-400 placeholder:text-green-900 font-mono focus:border-green-400 focus:ring-green-400/20"
+                      value={yearOfCommencement}
+                      onChange={(e) => setYearOfCommencement(e.target.value)}
+                      placeholder="e.g. 2018"
+                      className="bg-zinc-950 border-zinc-800 text-white placeholder:text-zinc-700 focus:border-zinc-500 focus:ring-0 rounded-lg h-11"
                       disabled={isScanning}
                     />
                   </div>
 
-                  <div>
-                    <Label className="text-green-500 text-xs mb-1 flex items-center gap-2">
-                      <Globe className="w-3 h-3" />
-                      root@osint:~$ enter_geofence
+                  <div className="space-y-2">
+                    <Label className="text-zinc-400 text-xs font-medium flex items-center gap-2">
+                      <Globe className="w-3.5 h-3.5" />
+                      INSTITUTION
                     </Label>
                     <Input
-                      value={location}
-                      onChange={(e) => setLocation(e.target.value)}
-                      placeholder="Last Known Location"
-                      className="bg-black border-green-800 text-green-400 placeholder:text-green-900 font-mono focus:border-green-400 focus:ring-green-400/20"
+                      value={institution}
+                      onChange={(e) => setInstitution(e.target.value)}
+                      placeholder="e.g. University of Botswana"
+                      className="bg-zinc-950 border-zinc-800 text-white placeholder:text-zinc-700 focus:border-zinc-500 focus:ring-0 rounded-lg h-11"
                       disabled={isScanning}
                     />
                   </div>
                 </div>
 
-                <Button
-                  onClick={initiateScan}
-                  disabled={isScanning}
-                  className="w-full bg-green-950/50 border border-green-600 hover:bg-green-900/50 hover:border-green-400 text-green-400 font-mono font-bold py-3 glitch disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {isScanning ? (
-                    <span className="flex items-center justify-center gap-2">
-                      <Activity className="w-4 h-4 animate-pulse" />
-                      [ SCANNING... ]
-                    </span>
-                  ) : (
-                    <span className="flex items-center justify-center gap-2">
-                      <Radio className="w-4 h-4" />
-                      [ INITIATE SCAN ]
-                    </span>
-                  )}
-                </Button>
-
-                <button
-                  onClick={() => setShowSettings(!showSettings)}
-                  className="w-full text-center text-xs text-green-700 hover:text-green-500 transition-colors"
-                >
-                  [ CONFIGURE WEBHOOK ENDPOINT ]
-                </button>
+                <div className="pt-2">
+                  <Button
+                    onClick={initiateScan}
+                    disabled={isScanning}
+                    className="w-full bg-white text-black hover:bg-zinc-200 h-12 rounded-lg font-medium transition-all disabled:opacity-50"
+                  >
+                    {isScanning ? (
+                      <span className="flex items-center justify-center gap-2">
+                        <Activity className="w-4 h-4 animate-spin" />
+                        PROCESSING TARGET
+                      </span>
+                    ) : (
+                      <span className="flex items-center justify-center gap-2">
+                        <Search className="w-4 h-4" />
+                        INITIATE SCAN
+                      </span>
+                    )}
+                  </Button>
+                </div>
               </div>
             </div>
+          </div>
 
+          {/* Right Column: Results & Logs */}
+          <div className="lg:col-span-8 flex flex-col gap-6">
+            
             {/* Results Panel */}
             {result && (
-              <div className="border border-green-900/50 bg-black/60 rounded-lg overflow-hidden">
-                <div className="bg-green-950/30 px-4 py-2 border-b border-green-900/50 flex items-center justify-between">
-                  <span className="text-green-400 text-sm font-bold flex items-center gap-2">
-                    <Database className="w-4 h-4" />
+              <div className="border border-zinc-800 bg-zinc-950 rounded-2xl overflow-hidden shadow-2xl animate-in">
+                <div className="px-6 py-4 border-b border-zinc-800/50 flex items-center justify-between bg-black/50">
+                  <span className="text-white text-sm font-medium flex items-center gap-2">
+                    <Database className="w-4 h-4 text-zinc-400" />
                     INTELLIGENCE REPORT
                   </span>
-                  <span className={`text-xs font-bold ${getConfidenceColor(result.confidence)}`}>
-                    {getConfidenceIcon(result.confidence)} {result.confidence || 'UNKNOWN'}
-                  </span>
+                  {result.confidence && (
+                    <span className={`text-[10px] px-2.5 py-1 rounded-full border font-medium tracking-wide uppercase ${getConfidenceColor(result.confidence)}`}>
+                      {result.confidence} CONFIDENCE
+                    </span>
+                  )}
                 </div>
                 
-                <div className="p-4 space-y-3">
-                  {result.best_employer && (
-                    <div className="border-l-2 border-green-600 pl-3">
-                      <p className="text-green-600 text-xs">EMPLOYER</p>
-                      <p className="text-green-400 font-bold">{result.best_employer}</p>
+                <div className="p-6">
+                  {/* Warnings Row */}
+                  {(result.drift_warning || result.action_required) && (
+                    <div className="flex flex-col gap-3 mb-6">
+                      {result.drift_warning && (
+                        <div className="flex items-start gap-3 p-3 rounded-lg border border-zinc-700 bg-zinc-800/30">
+                          <AlertTriangle className="w-4 h-4 text-zinc-300 mt-0.5" />
+                          <div>
+                            <p className="text-white text-sm font-medium">Identity Drift Detected</p>
+                            <p className="text-zinc-400 text-xs mt-1">Matched names do not precisely equal the target. Results may be unreliable.</p>
+                          </div>
+                        </div>
+                      )}
+                      {result.action_required && (
+                        <div className="flex items-start gap-3 p-3 rounded-lg border border-zinc-800 bg-zinc-900/50">
+                          <CheckCircle className="w-4 h-4 text-zinc-400 mt-0.5" />
+                          <div>
+                            <p className="text-white text-sm font-medium">Manual Verification Required</p>
+                            <p className="text-zinc-500 text-xs mt-1">Please manually review the sources before taking action.</p>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
-                  
-                  {result.best_title && (
-                    <div className="border-l-2 border-green-600 pl-3">
-                      <p className="text-green-600 text-xs">TITLE/POSITION</p>
-                      <p className="text-green-400">{result.best_title}</p>
-                    </div>
-                  )}
-                  
-                  {result.location && (
-                    <div className="border-l-2 border-green-600 pl-3">
-                      <p className="text-green-600 text-xs">LOCATION</p>
-                      <p className="text-green-400">{result.location}</p>
-                    </div>
-                  )}
-                  
-                  {result.best_source && (
-                    <div className="border-l-2 border-green-600 pl-3">
-                      <p className="text-green-600 text-xs">PRIMARY SOURCE</p>
-                      <p className="text-green-400">{result.best_source}</p>
-                    </div>
-                  )}
-                  
-                  {result.drift_warning && (
-                    <div className="border border-red-900/50 bg-red-950/20 rounded p-3 mt-3">
-                      <p className="text-red-400 text-sm font-bold flex items-center gap-2">
-                        <AlertTriangle className="w-4 h-4" />
-                        IDENTITY DRIFT DETECTED
-                      </p>
-                      <p className="text-red-500/80 text-xs mt-1">
-                        AI matched names that do not equal the target. Results may be unreliable.
-                      </p>
-                    </div>
-                  )}
-                  
-                  {result.action_required && (
-                    <div className="border border-yellow-900/50 bg-yellow-950/20 rounded p-3">
-                      <p className="text-yellow-400 text-xs">ACTION REQUIRED</p>
-                      <p className="text-yellow-500/80 text-xs mt-1">
-                        Manual verification recommended before proceeding.
-                      </p>
-                    </div>
-                  )}
-                  
-                  {result.reasoning && (
-                    <div className="mt-4 pt-3 border-t border-green-900/30">
-                      <p className="text-green-600 text-xs mb-2">ANALYSIS LOG</p>
-                      <p className="text-green-500/80 text-xs whitespace-pre-wrap">{result.reasoning}</p>
-                    </div>
-                  )}
+
+                  {/* Dynamic Data Render */}
+                  <div className="space-y-6">
+                    {Object.entries(result).filter(([k]) => !['confidence', 'drift_warning', 'action_required'].includes(k)).length > 0 ? (
+                      <div className="grid grid-cols-1 gap-6">
+                        {Object.entries(result)
+                          .filter(([k]) => !['confidence', 'drift_warning', 'action_required'].includes(k))
+                          .map(([key, value]) => {
+                            // Format scalar values nicely
+                            const isObject = typeof value === 'object' && value !== null;
+                            return (
+                              <div key={key} className="flex flex-col gap-1.5">
+                                <span className="text-zinc-500 text-[11px] font-semibold uppercase tracking-wider">
+                                  {key.replace(/_/g, ' ')}
+                                </span>
+                                {isObject ? (
+                                  <div className="bg-black border border-zinc-800/50 rounded-lg p-4 mt-1 overflow-x-auto text-sm">
+                                    <JsonViewer data={value} />
+                                  </div>
+                                ) : (
+                                  <div className="text-zinc-200 text-sm bg-zinc-900/30 border border-zinc-800/30 rounded-lg p-3">
+                                    {String(value)}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                      </div>
+                    ) : (
+                      <div className="text-center py-8 text-zinc-500 text-sm">
+                        No additional data points returned in the payload.
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             )}
-          </div>
 
-          {/* Terminal Log */}
-          <div className="border border-green-900/50 bg-black/80 rounded-lg overflow-hidden flex flex-col h-[600px]">
-            <div className="bg-green-950/30 px-4 py-2 border-b border-green-900/50 flex items-center justify-between">
-              <span className="text-green-400 text-sm font-bold flex items-center gap-2">
-                <Terminal className="w-4 h-4" />
-                SYSTEM_LOG.txt
-              </span>
-              <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-                <span className="text-green-600 text-xs">LIVE</span>
-              </div>
-            </div>
-            
-            <div className="flex-1 p-4 overflow-y-auto font-mono text-sm space-y-1">
-              {logs.length === 0 ? (
-                <p className="text-green-800 italic">Waiting for input...</p>
-              ) : (
-                logs.map((log) => (
-                  <div key={log.id} className="flex gap-3">
-                    <span className="text-green-700 flex-shrink-0">[{log.timestamp}]</span>
-                    <span className={`
-                      ${log.type === 'error' ? 'text-red-400' : ''}
-                      ${log.type === 'warning' ? 'text-yellow-400' : ''}
-                      ${log.type === 'success' ? 'text-green-400' : ''}
-                      ${log.type === 'system' ? 'text-cyan-400' : ''}
-                      ${log.type === 'info' ? 'text-green-500' : ''}
-                    `}>
-                      {log.type === 'error' && '[!] '}
-                      {log.type === 'warning' && '[?] '}
-                      {log.type === 'success' && '[+] '}
-                      {log.type === 'system' && '[*] '}
-                      {log.type === 'info' && '[>] '}
-                      {log.message}
-                    </span>
-                  </div>
-                ))
-              )}
-              {isScanning && (
-                <div className="flex gap-3">
-                  <span className="text-green-700 flex-shrink-0">[{new Date().toLocaleTimeString('en-US', { hour12: false })}]</span>
-                  <span className="text-green-400 cursor-blink">Processing</span>
+            {/* Terminal Log */}
+            <div className={`border border-zinc-800 bg-black rounded-2xl overflow-hidden shadow-2xl flex flex-col transition-all duration-500 ${result ? 'h-[300px]' : 'h-[600px]'}`}>
+              <div className="px-5 py-3 border-b border-zinc-900 flex items-center justify-between">
+                <span className="text-zinc-400 text-xs font-medium flex items-center gap-2">
+                  <Terminal className="w-3.5 h-3.5" />
+                  SYSTEM LOG
+                </span>
+                <div className="flex gap-1.5">
+                  <div className="w-2.5 h-2.5 rounded-full bg-zinc-800"></div>
+                  <div className="w-2.5 h-2.5 rounded-full bg-zinc-800"></div>
+                  <div className="w-2.5 h-2.5 rounded-full bg-zinc-800"></div>
                 </div>
-              )}
-              <div ref={logsEndRef} />
-            </div>
-            
-            <div className="border-t border-green-900/50 px-4 py-2 bg-green-950/20">
-              <div className="flex items-center gap-2 text-xs text-green-600">
-                <span className="text-green-500">{'>'}</span>
-                <span className="animate-pulse">_</span>
+              </div>
+              
+              <div className="flex-1 p-5 overflow-y-auto font-mono text-[13px] space-y-2">
+                {logs.length === 0 ? (
+                  <p className="text-zinc-700">Waiting for input...</p>
+                ) : (
+                  logs.map((log) => (
+                    <div key={log.id} className="flex gap-3 leading-relaxed">
+                      <span className="text-zinc-600 flex-shrink-0 whitespace-nowrap">[{log.timestamp}]</span>
+                      <span className={`break-all
+                        ${log.type === 'error' ? 'text-zinc-100 font-medium' : ''}
+                        ${log.type === 'warning' ? 'text-zinc-300' : ''}
+                        ${log.type === 'success' ? 'text-white font-medium' : ''}
+                        ${log.type === 'system' ? 'text-zinc-500' : ''}
+                        ${log.type === 'info' ? 'text-zinc-400' : ''}
+                      `}>
+                        {log.message}
+                      </span>
+                    </div>
+                  ))
+                )}
+                {isScanning && (
+                  <div className="flex gap-3 text-zinc-500">
+                    <span className="flex-shrink-0 whitespace-nowrap">[{new Date().toLocaleTimeString('en-US', { hour12: false })}]</span>
+                    <span className="animate-pulse">Still searching...</span>
+                  </div>
+                )}
+                <div ref={logsEndRef} />
               </div>
             </div>
+
           </div>
         </div>
 
         {/* Footer */}
-        <footer className="mt-8 border-t border-green-900/30 pt-4 text-center">
-          <p className="text-green-800 text-xs">
-            DTEF OSINT TRACER // CLASSIFIED // UNAUTHORIZED ACCESS PROHIBITED
+        <footer className="mt-12 text-center pb-8">
+          <p className="text-zinc-600 text-xs font-medium tracking-wide">
+            ENTERPRISE INTELLIGENCE SYSTEM &copy; {new Date().getFullYear()}
           </p>
-          <p className="text-green-900 text-xs mt-1">
-            All operations logged | Session ID: {Math.random().toString(36).substring(2, 10).toUpperCase()}
+          <p className="text-zinc-700 text-[10px] mt-2 font-mono">
+            SESSION: {Math.random().toString(36).substring(2, 10).toUpperCase()}
           </p>
         </footer>
       </main>
