@@ -118,11 +118,6 @@ function App() {
 
       addLog('Search complete. Data retrieved successfully', 'success');
       const data = await response.json();
-      
-      // Dump raw n8n output to log
-      addLog('--- RAW N8N OUTPUT ---', 'system');
-      const rawLines = JSON.stringify(data, null, 2).split('\n');
-      rawLines.forEach(line => addLog(line, 'system'));
 
       let parsedResult: OSINTResult = {};
       
@@ -388,11 +383,17 @@ function App() {
 
                   {/* Dynamic Data Render */}
                   <div className="space-y-6">
-                    {Object.entries(result).filter(([k]) => !['confidence', 'drift_warning', 'action_required'].includes(k)).length > 0 ? (
-                      <div className="grid grid-cols-1 gap-6">
-                        {Object.entries(result)
-                          .filter(([k]) => !['confidence', 'drift_warning', 'action_required'].includes(k))
-                          .map(([key, value]) => {
+                    {(() => {
+                      const hiddenKeys = [
+                        'confidence', 'drift_warning', 'action_required', 
+                        'best_source', 'sources_matched', 'name_found_in_sources', 
+                        'inference_chain', 'output', 'debug', 'reasoning'
+                      ];
+                      const visibleEntries = Object.entries(result).filter(([k]) => !hiddenKeys.includes(k));
+                      
+                      return visibleEntries.length > 0 ? (
+                        <div className="grid grid-cols-1 gap-6">
+                          {visibleEntries.map(([key, value]) => {
                             // Format scalar values nicely
                             const isObject = typeof value === 'object' && value !== null;
                             return (
@@ -412,12 +413,13 @@ function App() {
                               </div>
                             );
                           })}
-                      </div>
-                    ) : (
-                      <div className="text-center py-8 text-zinc-500 text-sm">
-                        No additional data points returned in the payload.
-                      </div>
-                    )}
+                        </div>
+                      ) : (
+                        <div className="text-center py-8 text-zinc-500 text-sm">
+                          No additional public data points to display.
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
               </div>
