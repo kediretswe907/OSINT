@@ -3,7 +3,6 @@ import { Search, Shield, Users, Globe, Fingerprint, Database, ArrowRight, Mail, 
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
-import { Separator } from '@/components/ui/separator';
 
 const navLinks = [
   { label: 'How It Works', href: '#how-it-works' },
